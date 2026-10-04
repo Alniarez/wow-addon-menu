@@ -3,8 +3,7 @@
 
 local ADDON_NAME, ns = ...
 
--- Every theme, including Basic and Panel, which are built around a close
--- button corner the menu does not fill yet.
+-- Every theme, including Basic and Panel, which are built around a close button corner the menu does not fill yet.
 local THEME_DESCRIPTIONS = {
     basic    = "A metal window frame with a title bar.",
     gold     = "A gold dialog border with a title banner.",
@@ -22,10 +21,26 @@ local function GetThemeOptions()
     return container:GetData()
 end
 
+StaticPopupDialogs.ALNIMENU_ERASE_DATA = {
+    text         = "Erase all AlniMenu data (layout, custom buttons, saved layouts, theme) and reload the UI?",
+    button1      = ACCEPT or "Accept",
+    button2      = CANCEL or "Cancel",
+    OnAccept     = function()
+        AlniMenuDB = nil
+        ReloadUI()
+    end,
+    timeout      = 0,
+    whileDead    = true,
+    hideOnEscape = true,
+    showAlert    = true,
+}
+
 local loader = CreateFrame("Frame")
 loader:RegisterEvent("ADDON_LOADED")
 loader:SetScript("OnEvent", function(self, _, name)
-    if name ~= ADDON_NAME then return end
+    if name ~= ADDON_NAME then
+        return
+    end
     self:UnregisterAllEvents()
 
     local category = Settings.RegisterVerticalLayoutCategory("AlniMenu")
@@ -39,13 +54,18 @@ loader:SetScript("OnEvent", function(self, _, name)
         ns.ApplyTheme()
     end)
 
-    -- which buttons show, and in which category, is edited on the menu
-    -- itself (the gear in its corner)
+    -- which buttons show, and in which category, is edited on the menu itself (the gear in its corner)
     SettingsPanel:GetLayout(category):AddInitializer(CreateSettingsButtonInitializer(
         "Buttons and categories", "Edit Layout",
         function() ns.SetEditing(true) end,
         "Opens the menu in edit mode: show or hide buttons, move them between categories, "
         .. "and add, rename or reorder categories. The gear in the menu's corner does the same.",
+        true))
+
+    SettingsPanel:GetLayout(category):AddInitializer(CreateSettingsButtonInitializer(
+        "Erase all data", "Erase",
+        function() StaticPopup_Show("ALNIMENU_ERASE_DATA") end,
+        "Back to a new install: the Original layout, no custom buttons or saved layouts. Reloads the UI.",
         true))
 
     Settings.RegisterAddOnCategory(category)

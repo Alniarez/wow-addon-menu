@@ -1,12 +1,11 @@
 -- AlniMenu/Core.lua
 -- Saved settings, and making Esc open AlniMenu instead of the Game Menu.
 --
--- Whenever the Game Menu opens, AlniMenu closes it and opens in its
--- place. Esc closes AlniMenu like any addon window (UISpecialFrames).
+-- Whenever the Game Menu opens, AlniMenu closes it and opens in its place. Esc closes AlniMenu like any addon window
+-- (UISpecialFrames).
 --
--- Not RegisterGameMenuEscHandler: adding to that list from addon code
--- taints it, and then Blizzard's own Esc handlers are blocked
--- (SpellStopCasting, SpellStopTargeting).
+-- Not RegisterGameMenuEscHandler: adding to that list from addon code taints it, and then Blizzard's own Esc handlers
+-- are blocked (SpellStopCasting, SpellStopTargeting).
 --
 -- The Game Menu opens as usual:
 --   in combat       AlniMenu's secure buttons (Log Out, Exit Game...)
@@ -16,11 +15,12 @@
 
 local ADDON_NAME, ns = ...
 
--- AlnUI as it is right now, just after this folder's copy loaded. An
--- addon loading later with an older, unversioned copy would overwrite
--- the global AlnUI's functions; this keeps the ones AlniMenu came with.
+-- AlnUI as it is right now, just after this folder's copy loaded. An addon loading later with an older, unversioned
+-- copy would overwrite the global AlnUI's functions; this keeps the ones AlniMenu came with.
 local Lib = {}
-for k, v in pairs(AlnUI) do Lib[k] = v end
+for k, v in pairs(AlnUI) do
+    Lib[k] = v
+end
 ns.Lib = Lib
 
 --------------------------------------------------
@@ -30,7 +30,9 @@ ns.Lib = Lib
 local DEBUG = AlniDev and AlniDev.debug[ADDON_NAME] or false   -- also shows the debug view's bug icon on the menu
 
 local function DebugPrint(...)
-    if DEBUG then print("|cff33ff99" .. ADDON_NAME .. ":|r", ...) end
+    if DEBUG then
+        print("|cff33ff99" .. ADDON_NAME .. ":|r", ...)
+    end
 end
 ns.DebugPrint = DebugPrint
 ns.DEBUG = DEBUG
@@ -46,7 +48,9 @@ local DEFAULTS = {
 local function InitDB()
     AlniMenuDB = AlniMenuDB or {}
     for key, value in pairs(DEFAULTS) do
-        if AlniMenuDB[key] == nil then AlniMenuDB[key] = value end
+        if AlniMenuDB[key] == nil then
+            AlniMenuDB[key] = value
+        end
     end
     -- the player's own names for the built-in buttons, by key
     AlniMenuDB.labels = AlniMenuDB.labels or {}
@@ -54,6 +58,12 @@ local function InitDB()
     AlniMenuDB.custom = AlniMenuDB.custom or {}
     AlniMenuDB.nextCustom = AlniMenuDB.nextCustom or 1
     ns.LoadCustomEntries()
+    -- separator widgets (Menu.lua)
+    AlniMenuDB.separators = AlniMenuDB.separators or {}
+    AlniMenuDB.nextSeparator = AlniMenuDB.nextSeparator or 1
+    -- layouts saved from edit mode (Menu.lua)
+    AlniMenuDB.layouts = AlniMenuDB.layouts or {}
+    ns.LoadSeparatorEntries()
     -- which buttons are switched on, by key; missing ones use their default
     AlniMenuDB.buttons = AlniMenuDB.buttons or {}
     for key, entry in pairs(ns.ENTRIES) do
@@ -77,7 +87,9 @@ local function HookEscape()
             DebugPrint("Game Menu allowed once")
             return
         end
-        if InCombatLockdown() or IsShiftKeyDown() then return end
+        if InCombatLockdown() or IsShiftKeyDown() then
+            return
+        end
         HideUIPanel(GameMenuFrame)
         ns.ShowMenu()
     end)
@@ -90,8 +102,8 @@ end
 local events = CreateFrame("Frame")
 events:RegisterEvent("ADDON_LOADED")
 events:RegisterEvent("PLAYER_REGEN_DISABLED")
--- while AlniMenu is a proof of concept: say which Blizzard-only action
--- it was stopped from doing, so it can be moved to a secure button
+-- while AlniMenu is a proof of concept: say which Blizzard-only action it was stopped from doing, so it can be moved to
+-- a secure button
 events:RegisterEvent("ADDON_ACTION_FORBIDDEN")
 events:RegisterEvent("ADDON_ACTION_BLOCKED")
 events:SetScript("OnEvent", function(self, event, name, func)
