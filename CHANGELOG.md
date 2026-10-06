@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3
+
+- New Compact layout
+- New Traveler's Log button
+- Version shown in the corner of the menu
+- Other addons can add their own widgets
+
 ## 0.1.2
 
 - New widgets: volume slider, latency and separators

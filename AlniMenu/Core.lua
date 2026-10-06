@@ -8,15 +8,12 @@
 -- are blocked (SpellStopCasting, SpellStopTargeting).
 --
 -- The Game Menu opens as usual:
---   in combat       AlniMenu's secure buttons (Log Out, Exit Game...)
---                   cannot be shown then
---   with Shift+Esc  always, as a way out
+--   in combat       AlniMenu's secure buttons (Log Out, Exit Game...) cannot be shown
+--   with Shift+Esc  always
 --   once allowed    from AlniMenu's Blizzard Menu button
 
 local ADDON_NAME, ns = ...
 
--- AlnUI as it is right now, just after this folder's copy loaded. An addon loading later with an older, unversioned
--- copy would overwrite the global AlnUI's functions; this keeps the ones AlniMenu came with.
 local Lib = {}
 for k, v in pairs(AlnUI) do
     Lib[k] = v
@@ -58,14 +55,25 @@ local function InitDB()
     AlniMenuDB.custom = AlniMenuDB.custom or {}
     AlniMenuDB.nextCustom = AlniMenuDB.nextCustom or 1
     ns.LoadCustomEntries()
-    -- separator widgets (Menu.lua)
-    AlniMenuDB.separators = AlniMenuDB.separators or {}
-    AlniMenuDB.nextSeparator = AlniMenuDB.nextSeparator or 1
-    -- layouts saved from edit mode (Menu.lua)
+    -- widgets added more than once, like separators
+    AlniMenuDB.instances = AlniMenuDB.instances or {}
+    AlniMenuDB.nextInstance = AlniMenuDB.nextInstance or 1
+    if AlniMenuDB.separators then
+        for id in pairs(AlniMenuDB.separators) do
+            AlniMenuDB.instances["separator" .. id] = "separator"
+        end
+        AlniMenuDB.nextInstance = math.max(AlniMenuDB.nextInstance, AlniMenuDB.nextSeparator or 1)
+        AlniMenuDB.separators, AlniMenuDB.nextSeparator = nil, nil
+    end
+    -- layouts saved from edit mode
     AlniMenuDB.layouts = AlniMenuDB.layouts or {}
-    ns.LoadSeparatorEntries()
-    -- which buttons are switched on, by key; missing ones use their default
     AlniMenuDB.buttons = AlniMenuDB.buttons or {}
+end
+
+--- The layout, once every addon has loaded and registered its widgets (PLAYER_LOGIN)
+local function InitLayout()
+    ns.LoadInstances()
+    -- which buttons are switched on, by key; missing ones use their default
     for key, entry in pairs(ns.ENTRIES) do
         if not entry.always and AlniMenuDB.buttons[key] == nil then
             AlniMenuDB.buttons[key] = entry.default and true or false
@@ -73,6 +81,7 @@ local function InitDB()
     end
     -- which button goes in which category
     ns.CheckLayout()
+    ns.ready = true
 end
 
 --------------------------------------------------
@@ -101,6 +110,7 @@ end
 
 local events = CreateFrame("Frame")
 events:RegisterEvent("ADDON_LOADED")
+events:RegisterEvent("PLAYER_LOGIN")
 events:RegisterEvent("PLAYER_REGEN_DISABLED")
 -- while AlniMenu is a proof of concept: say which Blizzard-only action it was stopped from doing, so it can be moved to
 -- a secure button
@@ -117,6 +127,8 @@ events:SetScript("OnEvent", function(self, event, name, func)
         self:UnregisterEvent("ADDON_LOADED")
         InitDB()
         HookEscape()
+    elseif event == "PLAYER_LOGIN" then
+        InitLayout()
     elseif event == "PLAYER_REGEN_DISABLED" then
         -- the last moment its secure buttons may still be hidden
         ns.HideMenu()

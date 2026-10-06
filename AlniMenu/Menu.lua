@@ -11,10 +11,10 @@ local COLUMN_GAP         = 8    -- between columns
 local SECTION_GAP        = 20   -- between sections
 local HEADING_H          = 20   -- the category names over the columns
 local TOP, BOTTOM        = 48, 34
+local RELEASE            = "Beta"   -- shown after the version in the menu's corner; "" for none
 local SIDE               = 28
 local EDIT_W             = 260  -- columns in edit mode, room for the controls
 local MIN_UNUSED_ROWS    = 8    -- Unused wraps into more columns past this or the tallest category
-local SEPARATOR_H        = 12   -- a separator row, outside edit mode
 
 -- Blizzard's big red Game Menu button
 local BUTTON_TEMPLATE = "MainMenuFrameButtonTemplate"
@@ -264,6 +264,20 @@ local function ProfessionEntry(slot, fallback)
     }
 end
 
+--- Opens the Adventure Guide on its Traveler's Log tab
+local function OpenTravelersLog()
+    if not EncounterJournal and EncounterJournal_LoadUI then
+        EncounterJournal_LoadUI()
+    end
+    if not (EncounterJournal and EncounterJournal.MonthlyActivitiesTab) then
+        return
+    end
+    if not EncounterJournal:IsShown() then
+        ToggleEncounterJournal()
+    end
+    EJ_ContentTab_Select(EncounterJournal.MonthlyActivitiesTab:GetID())
+end
+
 local function CollectionsTab(index)
     return Func("ToggleCollectionsJournal", function() ToggleCollectionsJournal(index) end)
 end
@@ -308,6 +322,12 @@ local ENTRIES = {
     appearances  = { text = "Appearances", action = CollectionsTab(COLLECTIONS_JOURNAL_TAB_INDEX_APPEARANCES or 5) },
     adventure    = { text = L("ADVENTURE_JOURNAL", "Adventure Guide"), action = Click("EJMicroButton"),
                      badge  = AlertBadge(Alerts.AdventureGuide) },
+    travelerslog = { text = L("MONTHLY_ACTIVITIES_TAB", "Traveler's Log"),
+                     action = Func("ToggleEncounterJournal", OpenTravelersLog),
+                     shown  = function()
+                         return C_PlayerInfo and C_PlayerInfo.IsTravelersLogAvailable
+                             and C_PlayerInfo.IsTravelersLogAvailable()
+                     end },
 
     -- the Game Menu's own
     options  = { text = L("GAMEMENU_OPTIONS", "Options"), default = true, action = Func(nil, OpenSettings),
@@ -334,15 +354,108 @@ local ENTRIES = {
     reload   = { text = "Reload UI", default = true, action = Macro("/reload") },
     logout   = { text = L("LOG_OUT", "Log Out"), default = true, action = Macro("/logout") },
     exit     = { text = L("EXIT_GAME", "Exit Game"), default = true, action = Macro("/quit") },
-    volume   = { text = "Volume", widget = true, action = function() return { volume = true } end },
-    latency  = { text = "Latency", widget = true, action = function() return { latency = true } end },
     blizzard = { text = "Blizzard Menu", default = true, action = Func(nil, ShowBlizzardMenu) },
     -- optional: without it the menu shows a close X by the gear
     close    = { text = L("RETURN_TO_GAME", "Return to Game"), default = true, action = Func(nil, function() end) },
 }
 
--- Widgets: added from edit mode (Add Widget), never in Unused. In the order Add Widget lists them
-local WIDGETS = { "volume", "latency" }
+--------------------------------------------------
+-- Widgets
+--
+-- Rows that are not buttons, registered with AlniMenu.RegisterWidget by AlniMenu itself (Plugins.lua) or by other
+-- addons. Added from edit mode (Add Widget), never in Unused. A `multiple` widget can be added any number of times:
+-- each one is the entry "<key><id>", saved as AlniMenuDB.instances["<key><id>"] = key.
+--------------------------------------------------
+
+---@class AlniMenuWidget
+---@field text string label, also in the Add Widget list (default: the key)
+---@field create? fun(row: AlniMenuWidgetRow) builds the widget in its row
+---@field update? fun(row: AlniMenuWidgetRow) shows `row.name` (renamed or not) in `row.label`; default: the name alone
+---@field height? number row height outside edit mode (default: a button's)
+---@field multiple? boolean can be added any number of times, like separators
+
+---@class AlniMenuWidgetRow: Frame
+---@field label FontString centered in the row
+---@field name string the widget's label, as the player named it
+---@field lib table AlniMenu's copy of AlnUI, for building the widget
+
+local WIDGETS = {}       -- registered widget keys, in the order Add Widget lists them
+local WIDGET_DEFS = {}   -- key -> AlniMenuWidget
+
+--- The catalog entry for widget `key`, or for its instance `id`
+---@param key string
+---@param def AlniMenuWidget
+---@param id integer?
+---@return string
+local function WidgetEntry(key, def, id)
+    local entryKey = id and (key .. id) or key
+    ENTRIES[entryKey] = ENTRIES[entryKey] or {
+        key = entryKey, widget = def, instance = id, text = def.text, rowHeight = def.height,
+        action = function() return { widget = def } end,
+    }
+    return entryKey
+end
+
+--- A new instance of `multiple` widget `key`, saved in AlniMenuDB.instances
+---@param key string
+---@return string
+local function NewInstance(key)
+    local id = AlniMenuDB.nextInstance
+    AlniMenuDB.nextInstance = id + 1
+    AlniMenuDB.instances[key .. id] = key
+    return WidgetEntry(key, WIDGET_DEFS[key], id)
+end
+
+--- Catalog entries for the saved instances of registered widgets
+function ns.LoadInstances()
+    for entryKey, key in pairs(AlniMenuDB.instances) do
+        local def = WIDGET_DEFS[key]
+        local id = def and tonumber(entryKey:sub(#key + 1))
+        if id then
+            WidgetEntry(key, def, id)
+        end
+    end
+end
+
+--- The `multiple` widget an instance key like "separator3" belongs to, if any
+---@param entryKey string
+---@return string?
+local function InstanceOf(entryKey)
+    for _, key in ipairs(WIDGETS) do
+        if WIDGET_DEFS[key].multiple and entryKey:match("^" .. key:gsub("%p", "%%%0") .. "%d+$") then
+            return key
+        end
+    end
+end
+
+AlniMenu = AlniMenu or {}
+
+--- Adds a widget to AlniMenu's Add Widget list. Call it before PLAYER_LOGIN (from your addon's main chunk), with `##
+--- OptionalDeps: AlniMenu` in your TOC so AlniMenu loads first. Use a key unique to your addon, like "MyAddon_Clock".
+--- See Plugins.lua for examples.
+---@param key string
+---@param def AlniMenuWidget
+function AlniMenu.RegisterWidget(key, def)
+    assert(type(key) == "string" and type(def) == "table", "usage: AlniMenu.RegisterWidget(key, def)")
+    if WIDGET_DEFS[key] then
+        return
+    end
+    def.text = def.text or key
+    WIDGET_DEFS[key] = def
+    table.insert(WIDGETS, key)
+    if not def.multiple then
+        WidgetEntry(key, def)
+    end
+    -- registered late: its saved instances, and buttons if the menu is built
+    if ns.ready then
+        ns.LoadInstances()
+        for entryKey, entry in pairs(ENTRIES) do
+            if entry.widget == def then
+                ns.RefreshEntryButton(entryKey)
+            end
+        end
+    end
+end
 
 --------------------------------------------------
 -- Layout: which buttons go in which category
@@ -380,8 +493,25 @@ local ORIGINAL_LAYOUT = {
       gaps  = { addons = true, logout = true, close = true } },
 }
 
--- The layouts the settings page can load
-local LAYOUTS = { default = DEFAULT_LAYOUT, original = ORIGINAL_LAYOUT }
+-- The layouts the settings page can load The game's main windows, a separator and the volume and latency widgets in a
+-- second column
+local COMPACT_LAYOUT = {
+    { name = "Game Menu", fixed = true,
+      items = { "options", "addons", "editmode", "macros", "logout", "exit" },
+      gaps  = { addons = true, logout = true } },
+    { name = "Player",
+      items = { "character", "travelerslog", "talents", "profession1", "profession2", "separator", "volume", "latency" },
+      gaps  = { profession1 = true } },
+}
+
+local LAYOUTS = { default = DEFAULT_LAYOUT, original = ORIGINAL_LAYOUT, compact = COMPACT_LAYOUT }
+
+-- Load Layout lists them in this order
+local LAYOUT_ORDER = {
+    { name = "default", label = "Default" },
+    { name = "original", label = "Original" },
+    { name = "compact", label = "Compact" },
+}
 
 -- The Game Menu category: always shown, never renamed or deleted
 local GAME_MENU_NAME = L("MAINMENU_BUTTON", "Game Menu")
@@ -561,10 +691,10 @@ function ns.CheckLayout()
         end
     end
 
-    -- separators only exist in a category
+    -- widget instances only exist in a category
     for key, entry in pairs(ENTRIES) do
-        if entry.separator and not InLayout(layout, key) then
-            AlniMenuDB.separators[entry.separator] = nil
+        if entry.instance and not InLayout(layout, key) then
+            AlniMenuDB.instances[key] = nil
             ns.RemoveEntry(key)
         end
     end
@@ -653,28 +783,6 @@ function ns.LoadCustomEntries()
     end
 end
 
---------------------------------------------------
--- Separators
---
--- AlniMenuDB.separators[id] = true, added from Add Widget. Each is the widget "separator<id>", so there can be any
--- number of them.
---------------------------------------------------
-
-function ns.AddSeparatorEntry(id)
-    local key = "separator" .. id
-    ENTRIES[key] = ENTRIES[key] or {
-        key = key, separator = id, widget = true, text = "Separator", rowHeight = SEPARATOR_H,
-        action = function() return { separator = true } end,
-    }
-    return key
-end
-
-function ns.LoadSeparatorEntries()
-    for id in pairs(AlniMenuDB.separators) do
-        ns.AddSeparatorEntry(id)
-    end
-end
-
 --- Whether the player has `key` switched on
 ---@param key string
 ---@return boolean
@@ -700,123 +808,42 @@ local menu
 -- each button is
 local debugView = false
 
---- The master volume slider: a row the size of a button
+--- A widget's row: the size of a button, with a label, filled in by the widget's `create`. Nil if `create` fails.
 ---@param entry table
 ---@param action table
----@return Frame
-local function CreateVolumeSlider(entry, action)
-    local b = CreateFrame("Frame", nil, menu)
-    b:SetSize(BUTTON_W, BUTTON_H)
-    b.action = action
-
-    local function Volume()
-        return math.floor((tonumber(GetCVar("Sound_MasterVolume")) or 0) * 100 + 0.5)
-    end
-    local slider = ns.Lib:CreateSlider(b, {
-        width = BUTTON_W - 40,
-        value = Volume(),
-        onChange = function(value)
-            value = math.floor(value + 0.5)
-            -- also called while the slider is made and on every show
-            if value ~= Volume() then
-                SetCVar("Sound_MasterVolume", value / 100)
-            end
-            if b.name then
-                b.label:SetText(b.name .. " " .. value .. "%")
-            end
-        end,
-    })
-    slider:SetPoint("TOP", 0, -2)
-    b.label = slider.label
-    b.name = ns.Label(entry.key)
+---@return Frame?
+local function CreateWidgetRow(entry, action)
+    local def = action.widget
+    local row = CreateFrame("Frame", nil, menu)
+    row:SetSize(BUTTON_W, def.height or BUTTON_H)
+    row.action = action
+    row.lib = ns.Lib
+    row.label = row:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    row.label:SetPoint("CENTER")
 
     -- what the layout and edit mode use on buttons
-    function b:SetText(text)
+    function row:SetText(text)
         self.name = text
-        self.label:SetText(text .. " " .. Volume() .. "%")
+        if def.update then
+            def.update(self)
+        else
+            self.label:SetText(text)
+        end
     end
-    function b:GetFontString()
+    function row:GetFontString()
         return self.label
     end
-    b:SetText(b.name)
 
-    -- the volume may have changed since the menu last showed
-    b:SetScript("OnShow", function() slider:SetValue(Volume()) end)
-    return b
-end
-
---- Home and world latency, as the micro menu's tooltip shows them
----@param entry table
----@param action table
----@return Frame
-local function CreateLatency(entry, action)
-    local b = CreateFrame("Frame", nil, menu)
-    b:SetSize(BUTTON_W, BUTTON_H)
-    b.action = action
-    b.label = b:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    b.label:SetPoint("CENTER")
-
-    local function Color(ms)
-        if ms < (PERFORMANCEBAR_LOW_LATENCY or 300) then
-            return "|cff00ff00"
+    if def.create then
+        local ok, err = pcall(def.create, row)
+        if not ok then
+            print("|cff33ff99" .. ADDON_NAME .. ":|r widget " .. entry.key .. " failed: " .. tostring(err))
+            row:Hide()
+            return nil
         end
-        if ms < (PERFORMANCEBAR_MEDIUM_LATENCY or 600) then
-            return "|cffffff00"
-        end
-        return "|cffff0000"
     end
-    local function Update()
-        local _, _, home, world = GetNetStats()
-        b.label:SetText(b.name .. " " .. Color(home) .. home .. "|r / " .. Color(world) .. world .. "|r ms")
-    end
-
-    function b:SetText(text)
-        self.name = text
-        Update()
-    end
-    function b:GetFontString()
-        return self.label
-    end
-    b:SetText(ns.Label(entry.key))
-
-    -- every second while the menu is open
-    b:SetScript("OnShow", function()
-        Update()
-        b.ticker = C_Timer.NewTicker(1, Update)
-    end)
-    b:SetScript("OnHide", function()
-        if b.ticker then
-            b.ticker:Cancel()
-        end
-        b.ticker = nil
-    end)
-    ns.Lib:AddTooltip(b, function()
-        return ns.Label(entry.key), "Home: chat, friends and addons.\nWorld: combat and everything around you."
-    end)
-    return b
-end
-
---- A line across the column
----@param entry table
----@param action table
----@return Frame
-local function CreateSeparatorRow(entry, action)
-    local b = CreateFrame("Frame", nil, menu)
-    b:SetSize(BUTTON_W, SEPARATOR_H)
-    b.action = action
-    local line = ns.Lib:CreateSeparator(b, { color = { 0.8, 0.7, 0.4, 0.6 } })
-    line:ClearAllPoints()
-    line:SetPoint("LEFT", 12, 0)
-    line:SetPoint("RIGHT", -12, 0)
-
-    -- what the layout and edit mode use on buttons
-    b.label = b:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    function b:SetText()
-    end
-    function b:GetFontString()
-        return self.label
-    end
-    return b
+    row:SetText(ns.Label(entry.key))
+    return row
 end
 
 --- Makes the button for `entry`, the way its action needs; nil when this client cannot do it
@@ -827,16 +854,9 @@ local function CreateMenuButton(entry)
     if not action then
         return nil
     end
-    if action.separator then
-        return CreateSeparatorRow(entry, action)
+    if action.widget then
+        return CreateWidgetRow(entry, action)
     end
-    if action.volume then
-        return CreateVolumeSlider(entry, action)
-    end
-    if action.latency then
-        return CreateLatency(entry, action)
-    end
-
     local b
     if action.click or action.macro or action.spell then
         b = CreateFrame("Button", nil, menu, "SecureActionButtonTemplate, " .. BUTTON_TEMPLATE)
@@ -1031,8 +1051,8 @@ local function Snapshot()
         labels     = Copy(AlniMenuDB.labels),
         custom     = Copy(AlniMenuDB.custom),
         nextCustom = AlniMenuDB.nextCustom,
-        separators    = Copy(AlniMenuDB.separators),
-        nextSeparator = AlniMenuDB.nextSeparator,
+        instances    = Copy(AlniMenuDB.instances),
+        nextInstance = AlniMenuDB.nextInstance,
     }
 end
 
@@ -1055,7 +1075,7 @@ local function Discard()
         if entry.custom and not saved.custom[entry.custom] then
             ns.RemoveEntry(key)
         end
-        if entry.separator and not saved.separators[entry.separator] then
+        if entry.instance and not saved.instances[key] then
             ns.RemoveEntry(key)
         end
     end
@@ -1064,11 +1084,11 @@ local function Discard()
     AlniMenuDB.labels     = saved.labels
     AlniMenuDB.custom     = saved.custom
     AlniMenuDB.nextCustom = saved.nextCustom
-    AlniMenuDB.separators    = saved.separators
-    AlniMenuDB.nextSeparator = saved.nextSeparator
+    AlniMenuDB.instances    = saved.instances
+    AlniMenuDB.nextInstance = saved.nextInstance
     saved = nil
     ns.LoadCustomEntries()
-    ns.LoadSeparatorEntries()
+    ns.LoadInstances()
     -- secure buttons: only out of combat
     if InCombatLockdown() then
         refreshButtons = true
@@ -1242,22 +1262,22 @@ local function AddWidget(key)
     Changed()
 end
 
---- Adds a new separator at the end of the Game Menu category
-local function AddSeparator()
-    local id = AlniMenuDB.nextSeparator
-    AlniMenuDB.nextSeparator = id + 1
-    AlniMenuDB.separators[id] = true
-    local key = ns.AddSeparatorEntry(id)
-    ns.RefreshEntryButton(key)
-    AddWidget(key)
+--- Adds a new instance of `multiple` widget `key` at the end of the Game Menu category
+---@param key string
+local function AddInstance(key)
+    local entryKey = NewInstance(key)
+    ns.RefreshEntryButton(entryKey)
+    if ENTRIES[entryKey] and ENTRIES[entryKey].button then
+        AddWidget(entryKey)
+    end
 end
 
---- Takes widget `key` out of the menu; Add Widget offers it again. A separator is deleted.
+--- Takes widget `key` out of the menu; Add Widget offers it again. An instance of a `multiple` widget is deleted.
 ---@param key string
 local function RemoveWidget(key)
     local entry = ENTRIES[key]
-    if entry and entry.separator then
-        AlniMenuDB.separators[entry.separator] = nil
+    if entry and entry.instance then
+        AlniMenuDB.instances[key] = nil
         AlniMenuDB.buttons[key] = nil
         ns.RemoveEntry(key)
         Changed()
@@ -1273,29 +1293,28 @@ local function RemoveWidget(key)
     Changed()
 end
 
---- The Add Widget list: widgets this client has that are not in the menu
+--- The Add Widget list: the widgets not in the menu yet, and the ones that can be added any number of times
 ---@param owner Frame
 local function ShowWidgetMenu(owner)
-    local available = {}
+    local choices = {}
     for _, key in ipairs(WIDGETS) do
-        if ENTRIES[key].button and not Find(key) then
-            table.insert(available, key)
+        local def = WIDGET_DEFS[key]
+        if def.multiple then
+            table.insert(choices, { text = def.text, add = function() AddInstance(key) end })
+        elseif ENTRIES[key].button and not Find(key) then
+            table.insert(choices, { text = ns.Label(key), add = function() AddWidget(key) end })
         end
     end
     if not (MenuUtil and MenuUtil.CreateContextMenu) then
-        if available[1] then
-            AddWidget(available[1])
-        else
-            AddSeparator()
+        if choices[1] then
+            choices[1].add()
         end
         return
     end
     MenuUtil.CreateContextMenu(owner, function(_, root)
-        for _, key in ipairs(available) do
-            root:CreateButton(ns.Label(key), function() AddWidget(key) end)
+        for _, choice in ipairs(choices) do
+            root:CreateButton(choice.text, choice.add)
         end
-        -- any number of these
-        root:CreateButton("Separator", AddSeparator)
     end)
 end
 
@@ -1309,8 +1328,9 @@ local function ShowLayoutMenu(owner)
         return Ask("Default", { name = "default" })
     end
     MenuUtil.CreateContextMenu(owner, function(_, root)
-        root:CreateButton("Default", function() Ask("Default", { name = "default" }) end)
-        root:CreateButton("Original", function() Ask("Original", { name = "original" }) end)
+        for _, layout in ipairs(LAYOUT_ORDER) do
+            root:CreateButton(layout.label, function() Ask(layout.label, { name = layout.name }) end)
+        end
         if #AlniMenuDB.layouts > 0 then
             root:CreateDivider()
         end
@@ -1549,7 +1569,7 @@ local function EditFooter()
         width       = FOOTER_W,
         onClick     = function() ShowLayoutMenu(load) end,
         tooltip     = "Load Layout",
-        tooltipText = "Default, Original or one you saved. Replaces your layout.",
+        tooltipText = "Default, Original, Compact or one you saved. Replaces your layout.",
     })
     load:SetPoint("RIGHT", cancel, "LEFT", -24, 0)
     local save = ns.Lib:CreateButton(footer, {
@@ -1876,6 +1896,13 @@ local function BuildMenu()
     ns.Lib:AddTooltip(blizz, "Blizzard Menu")
     menu.blizz = blizz
 
+    -- the version, bottom left
+    local getMetadata = C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata
+    local version = menu:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    version:SetPoint("BOTTOMLEFT", 14, 12)
+    version:SetText(strtrim((getMetadata(ADDON_NAME, "Version") or "") .. " " .. RELEASE))
+    menu.version = version
+
     -- the close X, for when Return to Game is not in the menu
     local closeX = CreateFrame("Button", nil, menu, "UIPanelCloseButton")
     closeX:SetFrameLevel(menu:GetFrameLevel() + 20)
@@ -1915,7 +1942,8 @@ end
 --------------------------------------------------
 
 function ns.ShowMenu()
-    if InCombatLockdown() then
+    -- not before PLAYER_LOGIN, when the layout is ready
+    if InCombatLockdown() or not ns.ready then
         return false
     end
     if not menu then
@@ -2020,18 +2048,16 @@ function ns.DeleteLayout(name)
     end
 end
 
---- Puts a saved layout in place. Its separators come back as new ones
+--- Puts a saved layout in place. Its widget instances (separators...) come back as new ones
 ---@param saved table
 local function UseSaved(saved)
     local layout = Copy(saved.layout)
     local on = {}
     for _, category in ipairs(layout) do
         for j, key in ipairs(category.items) do
-            if key:match("^separator%d+$") then
-                local id = AlniMenuDB.nextSeparator
-                AlniMenuDB.nextSeparator = id + 1
-                AlniMenuDB.separators[id] = true
-                local new = ns.AddSeparatorEntry(id)
+            local widget = InstanceOf(key)
+            if widget then
+                local new = NewInstance(widget)
                 if category.gaps[key] then
                     category.gaps[key], category.gaps[new] = nil, true
                 end
@@ -2071,6 +2097,19 @@ function ns.LoadLayout(data)
     elseif LAYOUTS[data.name] then
         AlniMenuDB.layout = ns.DefaultLayout(LAYOUTS[data.name])
         SetButtonsFrom(LAYOUTS[data.name])
+        -- widgets that can be added more than once (separators) get a new instance each
+        for _, category in ipairs(AlniMenuDB.layout) do
+            for j, key in ipairs(category.items) do
+                if WIDGET_DEFS[key] and WIDGET_DEFS[key].multiple then
+                    local new = NewInstance(key)
+                    if category.gaps[key] then
+                        category.gaps[key], category.gaps[new] = nil, true
+                    end
+                    AlniMenuDB.buttons[new] = true
+                    category.items[j] = new
+                end
+            end
+        end
     else
         return
     end
